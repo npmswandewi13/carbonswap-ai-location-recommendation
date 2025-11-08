@@ -16,7 +16,7 @@ except Exception as e:
 
 app = FastAPI(title="CarbonSwap Recommendation API")
 
-# ---------- CONFIG: weights (final recommended) ----------
+# CONFIG: weights
 WEIGHTS = {
     "karbon_terserap": 0.25,
     "annual_survival_rate": 0.20,
@@ -28,9 +28,9 @@ WEIGHTS = {
     "nlp_sentiment": 0.10
 }
 
-CSV_PATH = os.getenv("LOCATIONS_CSV", "location.csv")  # set env var or use default
+CSV_PATH = os.getenv("LOCATIONS_CSV", "location.csv")
 
-# ----------------- helper parsing functions -----------------
+# helper parsing functions
 def parse_int_like(s):
     if pd.isna(s):
         return 0
@@ -84,7 +84,7 @@ def safe_to_float(x):
     except:
         return 0.0
 
-# ---------------- NLP sentiment (per-location aggregated) --------------
+# NLP sentiment (per-location aggregated)
 SENT_MODEL_NAME = os.getenv("HF_SENT_MODEL", "indolem/indobert-base-uncased-sentiment")
 sentiment_pipe = None
 if HF_AVAILABLE:
@@ -95,10 +95,8 @@ if HF_AVAILABLE:
         sentiment_pipe = None
 
 def avg_sentiment_for_texts(texts: List[str]) -> float:
-    # returns value in 0..1 (higher = more positive)
     vals = []
     if sentiment_pipe is None:
-        # fallback rule-based
         pos = ["baik","bagus","aktif","mudah","cocok","sukses","terawat","terjaga","support"]
         neg = ["mati","buruk","sulit","abrasi","rusak","terbengkalai","sampah","abrasi"]
         for t in texts:
@@ -131,7 +129,7 @@ def avg_sentiment_for_texts(texts: List[str]) -> float:
         return 0.5
     return float(sum(vals) / len(vals))
 
-# ---------------- core scoring function ----------------
+# core scoring function 
 def compute_scores(df: pd.DataFrame, include_nlp: bool = True) -> pd.DataFrame:
     # cleaning numeric columns
     dfc = df.copy()
@@ -144,7 +142,7 @@ def compute_scores(df: pd.DataFrame, include_nlp: bool = True) -> pd.DataFrame:
     dfc["rating_ulasan"] = dfc.get("rating_ulasan", 0).apply(lambda x: safe_to_float(parse_numeric_allow_k(x)))
     dfc["jumlah_ulasan"] = dfc.get("jumlah_ulasan", 0).apply(parse_int_like)
 
-    # NLP: aggregate reviews from ulasan_1..4
+    # NLP
     review_cols = [c for c in dfc.columns if c.lower().startswith("ulasan") or c.lower().startswith("ulasan_")]
     nlp_scores = []
     for idx, row in dfc.iterrows():
@@ -156,7 +154,6 @@ def compute_scores(df: pd.DataFrame, include_nlp: bool = True) -> pd.DataFrame:
         nlp_scores.append(avg_sentiment_for_texts(texts))
     dfc["nlp_sentiment"] = nlp_scores
 
-    # choose feature list (only those present)
     feat_map = {
         "karbon_terserap": "karbon_terserap",
         "annual_survival_rate": "annual_survival_rate",
@@ -193,7 +190,7 @@ def compute_scores(df: pd.DataFrame, include_nlp: bool = True) -> pd.DataFrame:
     dfc_sorted = dfc.sort_values("skor_total", ascending=False).reset_index(drop=True)
     return dfc_sorted
 
-# --------------- endpoint(s) -----------------
+# endpoint(s)
 class RecommendationItem(BaseModel):
     nama_lokasi: str
     jenis_bibit: str
@@ -201,17 +198,15 @@ class RecommendationItem(BaseModel):
 
 @app.get("/recommendations", response_model=List[RecommendationItem])
 def get_recommendations(top_k: int = 10, include_nlp: bool = True):
-    # load CSV
     if not os.path.exists(CSV_PATH):
         return []
     df = pd.read_csv(CSV_PATH)
     df_sorted = compute_scores(df, include_nlp=include_nlp)
     top = df_sorted.head(top_k)[["nama_lokasi", "jenis_bibit", "skor_total"]]
-    # round skor
     top["skor_total"] = top["skor_total"].round(4)
     return top.to_dict(orient="records")
 
-# optional endpoint to return full ranked table
+# endpoint to return full ranked table
 @app.get("/ranked_full")
 def get_full_ranked(include_nlp: bool = True):
     if not os.path.exists(CSV_PATH):
